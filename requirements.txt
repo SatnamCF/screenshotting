@@ -1,0 +1,4 @@
+playwright>=1.48
+google-api-python-client>=2.149
+google-auth>=2.35
+PyYAML>=6.0

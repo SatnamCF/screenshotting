@@ -1,0 +1,50 @@
+name: screenshot
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # 07:00 UTC daily
+    - cron: "0 19 * * *"  # 19:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      sheets:
+        description: "Comma-separated sheet IDs (optional, overrides config)"
+        required: false
+        default: ""
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
+
+      - name: Write service account credentials
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          printf '%s' "$GOOGLE_CREDENTIALS_JSON" > credentials.json
+
+      - name: Write config from secret
+        env:
+          CONFIG_YAML: ${{ secrets.CONFIG_YAML }}
+        run: |
+          printf '%s' "$CONFIG_YAML" > config.yaml
+
+      - name: Run screenshot job
+        run: |
+          if [ -n "${{ github.event.inputs.sheets }}" ]; then
+            python screenshot_runner.py --sheets "${{ github.event.inputs.sheets }}"
+          else
+            python screenshot_runner.py
+          fi

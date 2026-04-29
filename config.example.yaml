@@ -1,0 +1,13 @@
+# Copy this file to `config.yaml` and fill in your own IDs.
+# `config.yaml` is gitignored; in CI it's written from the CONFIG_YAML secret.
+
+# Drive folder where screenshots are uploaded.
+# Get the ID from the folder URL: https://drive.google.com/drive/folders/<THIS_PART>
+drive_folder_id: REPLACE_WITH_DRIVE_FOLDER_ID
+
+# Sheets to process on every run. Add as many as you like.
+# Get the ID from the sheet URL: https://docs.google.com/spreadsheets/d/<THIS_PART>/edit
+# Each sheet must have header row + columns: Category | URL | Country | Keyword
+sheets:
+  - id: REPLACE_WITH_SHEET_ID
+    name: example-sheet
