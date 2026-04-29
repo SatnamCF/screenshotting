@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: ${{ fromJSON(needs.dispatch.outputs.matrix || '[]') }}
+        job: ${{ fromJSON(needs.dispatch.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

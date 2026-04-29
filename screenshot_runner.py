@@ -179,11 +179,19 @@ def cmd_dispatch():
     active = []
 
     def write_outputs():
-        payload = json.dumps(active)
+        # Matrix must always have at least one entry, otherwise GitHub Actions
+        # errors on strategy expansion. Use a sentinel when there's no work.
+        if active:
+            matrix_value = active
+            has_jobs = "true"
+        else:
+            matrix_value = [{"sheet_id": "__noop__", "subfolder_id": "__noop__", "sheet_name": "__noop__"}]
+            has_jobs = "false"
+        payload = json.dumps(matrix_value)
         if output_path:
             with open(output_path, "a", encoding="utf-8") as f:
                 f.write(f"matrix={payload}\n")
-                f.write(f"has_jobs={'true' if active else 'false'}\n")
+                f.write(f"has_jobs={has_jobs}\n")
         else:
             print(payload)
 
