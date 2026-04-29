@@ -116,19 +116,33 @@ async def main():
         "--sheets",
         help="Comma-separated sheet IDs to run instead of those in the config",
     )
+    parser.add_argument(
+        "--drive-folder-id",
+        help="Drive folder ID (overrides config.yaml)",
+    )
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
-    drive_folder_id = cfg["drive_folder_id"]
+    sheets_arg = args.sheets or os.environ.get("SHEET_IDS", "").strip()
+    drive_folder_arg = args.drive_folder_id or os.environ.get("DRIVE_FOLDER_ID", "").strip()
 
-    if args.sheets:
-        ids = [s.strip() for s in args.sheets.split(",") if s.strip()]
+    cfg = None
+    if not drive_folder_arg or not sheets_arg:
+        if os.path.exists(args.config):
+            cfg = load_config(args.config)
+
+    drive_folder_id = drive_folder_arg or (cfg or {}).get("drive_folder_id")
+    if not drive_folder_id:
+        print("Drive folder ID not provided (set DRIVE_FOLDER_ID, --drive-folder-id, or config.yaml).", file=sys.stderr)
+        sys.exit(1)
+
+    if sheets_arg:
+        ids = [s.strip() for s in sheets_arg.split(",") if s.strip()]
         sheets_to_run = [{"id": sid, "name": sid[:8]} for sid in ids]
     else:
-        sheets_to_run = cfg.get("sheets", [])
+        sheets_to_run = (cfg or {}).get("sheets", [])
 
     if not sheets_to_run:
-        print("No sheets configured.", file=sys.stderr)
+        print("No sheets configured (set SHEET_IDS, --sheets, or config.yaml).", file=sys.stderr)
         sys.exit(1)
 
     creds = get_credentials()

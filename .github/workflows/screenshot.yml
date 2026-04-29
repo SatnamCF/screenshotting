@@ -35,13 +35,10 @@ jobs:
         run: |
           printf '%s' "$GOOGLE_CREDENTIALS_JSON" > credentials.json
 
-      - name: Write config from secret
-        env:
-          CONFIG_YAML: ${{ secrets.CONFIG_YAML }}
-        run: |
-          printf '%s' "$CONFIG_YAML" > config.yaml
-
       - name: Run screenshot job
+        env:
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+          SHEET_IDS: ${{ secrets.SHEET_IDS }}
         run: |
           if [ -n "${{ github.event.inputs.sheets }}" ]; then
             python screenshot_runner.py --sheets "${{ github.event.inputs.sheets }}"
