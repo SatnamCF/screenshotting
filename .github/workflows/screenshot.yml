@@ -29,7 +29,11 @@ jobs:
         env:
           CONTROL_SHEET_ID: ${{ secrets.CONTROL_SHEET_ID }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
-        run: python screenshot_runner.py dispatch
+        run: |
+          python screenshot_runner.py dispatch
+          echo "----- GITHUB_OUTPUT contents -----"
+          cat "$GITHUB_OUTPUT"
+          echo "----- end -----"
 
   run:
     needs: dispatch
