@@ -213,10 +213,15 @@ def cmd_dispatch():
 
         for job in jobs:
             now_in_tz = datetime.now(job["tz"])
-            if not is_active_now(job, run_hours):
+            in_window = job["start"] <= now_in_tz <= job["stop"]
+            hour_ok = now_in_tz.hour in run_hours
+            if not (in_window and hour_ok):
                 print(
                     f"  skip row {job['row']} ({job['sheet_id'][:8]}) "
-                    f"now={now_in_tz.strftime('%Y-%m-%d %H:%M')} {job['tz_str']}",
+                    f"now={now_in_tz.strftime('%Y-%m-%d %H:%M')} {job['tz_str']}, "
+                    f"start={job['start'].strftime('%Y-%m-%d %H:%M')}, "
+                    f"stop={job['stop'].strftime('%Y-%m-%d %H:%M')}, "
+                    f"in_window={in_window}, hour_in_run_hours={hour_ok}",
                     flush=True,
                 )
                 continue
