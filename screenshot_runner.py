@@ -175,51 +175,61 @@ def is_active_now(job, run_hours):
 # ---------- dispatch ----------
 
 def cmd_dispatch():
-    control_id = os.environ["CONTROL_SHEET_ID"]
-    drive_folder_id = os.environ["DRIVE_FOLDER_ID"]
-
-    creds = get_credentials()
-    sheets_service = build("sheets", "v4", credentials=creds, cache_discovery=False)
-    drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
-
-    jobs, run_hours = read_control_sheet(sheets_service, control_id)
-    print(f"Run hours: {run_hours}", flush=True)
-    print(f"Jobs in control sheet: {len(jobs)}", flush=True)
-
-    active = []
-    for job in jobs:
-        now_in_tz = datetime.now(job["tz"])
-        if not is_active_now(job, run_hours):
-            print(
-                f"  skip row {job['row']} ({job['sheet_id'][:8]}) "
-                f"now={now_in_tz.strftime('%Y-%m-%d %H:%M')} {job['tz_str']}",
-                flush=True,
-            )
-            continue
-        try:
-            title = get_sheet_title(sheets_service, job["sheet_id"])
-        except Exception as e:
-            print(f"  row {job['row']}: cannot read sheet metadata ({e})", file=sys.stderr, flush=True)
-            continue
-        try:
-            subfolder_id = find_or_create_subfolder(drive_service, drive_folder_id, title)
-        except Exception as e:
-            print(f"  row {job['row']}: cannot create subfolder for '{title}' ({e})", file=sys.stderr, flush=True)
-            continue
-        active.append(
-            {"sheet_id": job["sheet_id"], "subfolder_id": subfolder_id, "sheet_name": title}
-        )
-        print(f"  ACTIVE: '{title}' -> subfolder {subfolder_id}", flush=True)
-
-    print(f"Active jobs to dispatch: {len(active)}", flush=True)
-    payload = json.dumps(active)
     output_path = os.environ.get("GITHUB_OUTPUT")
-    if output_path:
-        with open(output_path, "a", encoding="utf-8") as f:
-            f.write(f"matrix={payload}\n")
-            f.write(f"has_jobs={'true' if active else 'false'}\n")
-    else:
-        print(payload)
+    active = []
+
+    def write_outputs():
+        payload = json.dumps(active)
+        if output_path:
+            with open(output_path, "a", encoding="utf-8") as f:
+                f.write(f"matrix={payload}\n")
+                f.write(f"has_jobs={'true' if active else 'false'}\n")
+        else:
+            print(payload)
+
+    try:
+        control_id = os.environ.get("CONTROL_SHEET_ID", "").strip()
+        drive_folder_id = os.environ.get("DRIVE_FOLDER_ID", "").strip()
+        if not control_id:
+            raise RuntimeError("CONTROL_SHEET_ID env var is empty or missing")
+        if not drive_folder_id:
+            raise RuntimeError("DRIVE_FOLDER_ID env var is empty or missing")
+
+        creds = get_credentials()
+        sheets_service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+
+        jobs, run_hours = read_control_sheet(sheets_service, control_id)
+        print(f"Run hours: {run_hours}", flush=True)
+        print(f"Jobs in control sheet: {len(jobs)}", flush=True)
+
+        for job in jobs:
+            now_in_tz = datetime.now(job["tz"])
+            if not is_active_now(job, run_hours):
+                print(
+                    f"  skip row {job['row']} ({job['sheet_id'][:8]}) "
+                    f"now={now_in_tz.strftime('%Y-%m-%d %H:%M')} {job['tz_str']}",
+                    flush=True,
+                )
+                continue
+            try:
+                title = get_sheet_title(sheets_service, job["sheet_id"])
+            except Exception as e:
+                print(f"  row {job['row']}: cannot read sheet metadata ({e})", file=sys.stderr, flush=True)
+                continue
+            try:
+                subfolder_id = find_or_create_subfolder(drive_service, drive_folder_id, title)
+            except Exception as e:
+                print(f"  row {job['row']}: cannot create subfolder for '{title}' ({e})", file=sys.stderr, flush=True)
+                continue
+            active.append(
+                {"sheet_id": job["sheet_id"], "subfolder_id": subfolder_id, "sheet_name": title}
+            )
+            print(f"  ACTIVE: '{title}' -> subfolder {subfolder_id}", flush=True)
+
+        print(f"Active jobs to dispatch: {len(active)}", flush=True)
+    finally:
+        write_outputs()
 
 
 # ---------- run ----------
