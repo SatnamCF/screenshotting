@@ -2,46 +2,61 @@ name: screenshot
 
 on:
   schedule:
-    - cron: "0 7 * * *"   # 07:00 UTC daily
-    - cron: "0 19 * * *"  # 19:00 UTC daily
-  workflow_dispatch:
-    inputs:
-      sheets:
-        description: "Comma-separated sheet IDs (optional, overrides config)"
-        required: false
-        default: ""
+    - cron: "0 * * * *"   # every hour; run hours are filtered in the dispatcher
+  workflow_dispatch: {}
 
 jobs:
-  run:
+  dispatch:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.compute.outputs.matrix }}
+      has_jobs: ${{ steps.compute.outputs.has_jobs }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
       - name: Install Python deps
         run: pip install -r requirements.txt
-
-      - name: Install Playwright browser
-        run: python -m playwright install --with-deps chromium
-
       - name: Write service account credentials
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-        run: |
-          printf '%s' "$GOOGLE_CREDENTIALS_JSON" > credentials.json
-
-      - name: Run screenshot job
+        run: printf '%s' "$GOOGLE_CREDENTIALS_JSON" > credentials.json
+      - name: Compute active jobs
+        id: compute
         env:
+          CONTROL_SHEET_ID: ${{ secrets.CONTROL_SHEET_ID }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
-          SHEET_IDS: ${{ secrets.SHEET_IDS }}
+        run: python screenshot_runner.py dispatch
+
+  run:
+    needs: dispatch
+    if: needs.dispatch.outputs.has_jobs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJSON(needs.dispatch.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
+      - name: Write service account credentials
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: printf '%s' "$GOOGLE_CREDENTIALS_JSON" > credentials.json
+      - name: Process sheet
         run: |
-          if [ -n "${{ github.event.inputs.sheets }}" ]; then
-            python screenshot_runner.py --sheets "${{ github.event.inputs.sheets }}"
-          else
-            python screenshot_runner.py
-          fi
+          python screenshot_runner.py run \
+            --sheet-id "${{ matrix.job.sheet_id }}" \
+            --drive-folder-id "${{ matrix.job.subfolder_id }}" \
+            --sheet-name "${{ matrix.job.sheet_name }}"
