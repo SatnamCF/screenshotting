@@ -19,6 +19,8 @@ import sys
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+import imagehash
+from PIL import Image
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -88,6 +90,26 @@ def upload_to_drive(drive_service, folder_id, name, data):
         fields="id",
         supportsAllDrives=True,
     ).execute()
+
+
+def compute_phash(png_bytes):
+    img = Image.open(io.BytesIO(png_bytes))
+    return str(imagehash.phash(img))  # 16 hex chars
+
+
+def filtered_has_phash(drive_service, filtered_folder_id, phash):
+    q = (
+        f"'{filtered_folder_id}' in parents and trashed = false and "
+        f"name contains '{phash}_'"
+    )
+    res = drive_service.files().list(
+        q=q,
+        fields="files(id)",
+        includeItemsFromAllDrives=True,
+        supportsAllDrives=True,
+        pageSize=1,
+    ).execute()
+    return bool(res.get("files"))
 
 
 # ---------- Sheets ----------
@@ -185,7 +207,7 @@ def cmd_dispatch():
             matrix_value = active
             has_jobs = "true"
         else:
-            matrix_value = [{"sheet_id": "__noop__", "subfolder_id": "__noop__", "sheet_name": "__noop__"}]
+            matrix_value = [{"sheet_id": "__noop__", "subfolder_id": "__noop__", "filtered_subfolder_id": "__noop__", "sheet_name": "__noop__"}]
             has_jobs = "false"
         payload = json.dumps(matrix_value)
         if output_path:
@@ -232,13 +254,24 @@ def cmd_dispatch():
                 continue
             try:
                 subfolder_id = find_or_create_subfolder(drive_service, drive_folder_id, title)
+                filtered_subfolder_id = find_or_create_subfolder(
+                    drive_service, drive_folder_id, f"{title} filtered"
+                )
             except Exception as e:
                 print(f"  row {job['row']}: cannot create subfolder for '{title}' ({e})", file=sys.stderr, flush=True)
                 continue
             active.append(
-                {"sheet_id": job["sheet_id"], "subfolder_id": subfolder_id, "sheet_name": title}
+                {
+                    "sheet_id": job["sheet_id"],
+                    "subfolder_id": subfolder_id,
+                    "filtered_subfolder_id": filtered_subfolder_id,
+                    "sheet_name": title,
+                }
             )
-            print(f"  ACTIVE: '{title}' -> subfolder {subfolder_id}", flush=True)
+            print(
+                f"  ACTIVE: '{title}' -> {subfolder_id} | filtered -> {filtered_subfolder_id}",
+                flush=True,
+            )
 
         print(f"Active jobs to dispatch: {len(active)}", flush=True)
     finally:
@@ -247,7 +280,7 @@ def cmd_dispatch():
 
 # ---------- run ----------
 
-async def process_row(page, row, drive_service, drive_folder_id, sheet_label):
+async def process_row(page, row, drive_service, drive_folder_id, filtered_folder_id, sheet_label):
     url = row["url"]
     keyword = row["keyword"]
     print(f"[{sheet_label}] {url} :: '{keyword}'", flush=True)
@@ -287,10 +320,23 @@ async def process_row(page, row, drive_service, drive_folder_id, sheet_label):
     )
     upload_to_drive(drive_service, drive_folder_id, name, png)
     print(f"  uploaded {name}", flush=True)
+
+    if filtered_folder_id:
+        try:
+            phash = compute_phash(png)
+            if filtered_has_phash(drive_service, filtered_folder_id, phash):
+                print(f"  duplicate (phash {phash}); skipping filtered upload", flush=True)
+            else:
+                filtered_name = f"{phash}_{name}"
+                upload_to_drive(drive_service, filtered_folder_id, filtered_name, png)
+                print(f"  uploaded {filtered_name} to filtered", flush=True)
+        except Exception as e:
+            print(f"  filtered dedup failed: {e}", flush=True)
+
     return True
 
 
-async def cmd_run(sheet_id, drive_folder_id, sheet_name):
+async def cmd_run(sheet_id, drive_folder_id, filtered_folder_id, sheet_name):
     creds = get_credentials()
     sheets_service = build("sheets", "v4", credentials=creds, cache_discovery=False)
     drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
@@ -305,7 +351,7 @@ async def cmd_run(sheet_id, drive_folder_id, sheet_name):
         context = await browser.new_context(viewport=VIEWPORT)
         page = await context.new_page()
         for row in rows:
-            if await process_row(page, row, drive_service, drive_folder_id, label):
+            if await process_row(page, row, drive_service, drive_folder_id, filtered_folder_id, label):
                 found += 1
         await browser.close()
     print(f"Done: {found}/{len(rows)} screenshots uploaded.", flush=True)
@@ -320,13 +366,21 @@ def main():
     p_run = sub.add_parser("run", help="Process a single data sheet")
     p_run.add_argument("--sheet-id", required=True)
     p_run.add_argument("--drive-folder-id", required=True)
+    p_run.add_argument("--filtered-folder-id", default="")
     p_run.add_argument("--sheet-name", default="")
 
     args = parser.parse_args()
     if args.cmd == "dispatch":
         cmd_dispatch()
     elif args.cmd == "run":
-        asyncio.run(cmd_run(args.sheet_id, args.drive_folder_id, args.sheet_name))
+        asyncio.run(
+            cmd_run(
+                args.sheet_id,
+                args.drive_folder_id,
+                args.filtered_folder_id,
+                args.sheet_name,
+            )
+        )
 
 
 if __name__ == "__main__":

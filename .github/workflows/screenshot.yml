@@ -63,4 +63,5 @@ jobs:
           python screenshot_runner.py run \
             --sheet-id "${{ matrix.job.sheet_id }}" \
             --drive-folder-id "${{ matrix.job.subfolder_id }}" \
+            --filtered-folder-id "${{ matrix.job.filtered_subfolder_id }}" \
             --sheet-name "${{ matrix.job.sheet_name }}"
