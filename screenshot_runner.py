@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import imagehash
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -95,6 +95,54 @@ def upload_to_drive(drive_service, folder_id, name, data):
 def compute_phash(png_bytes):
     img = Image.open(io.BytesIO(png_bytes))
     return str(imagehash.phash(img))  # 16 hex chars
+
+
+# ---------- URL banner ----------
+
+URL_BAR_HEIGHT = 48
+URL_BAR_BG = (222, 225, 230)
+URL_PILL_BG = (255, 255, 255)
+URL_PILL_BORDER = (200, 203, 209)
+URL_TEXT_COLOR = (60, 64, 67)
+
+
+def _load_font(size):
+    for path in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",          # ubuntu runner
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "C:/Windows/Fonts/arial.ttf",                                # local dev
+    ):
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default(size)
+
+
+def add_url_banner(png_bytes, url):
+    """Stamp a browser-style address bar above the screenshot showing the URL."""
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    banner = Image.new("RGB", (img.width, img.height + URL_BAR_HEIGHT), URL_BAR_BG)
+    banner.paste(img, (0, URL_BAR_HEIGHT))
+    draw = ImageDraw.Draw(banner)
+
+    pad = 12
+    pill = (pad, 8, img.width - pad, URL_BAR_HEIGHT - 8)
+    draw.rounded_rectangle(pill, radius=16, fill=URL_PILL_BG, outline=URL_PILL_BORDER)
+
+    font = _load_font(16)
+    text_x = pill[0] + 14
+    max_w = pill[2] - text_x - 14
+    text = url
+    if draw.textlength(text, font=font) > max_w:
+        while text and draw.textlength(text + "…", font=font) > max_w:
+            text = text[:-1]
+        text += "…"
+    draw.text((text_x, URL_BAR_HEIGHT // 2), text, fill=URL_TEXT_COLOR, font=font, anchor="lm")
+
+    out = io.BytesIO()
+    banner.save(out, format="PNG")
+    return out.getvalue()
 
 
 def filtered_has_phash(drive_service, filtered_folder_id, phash):
@@ -312,7 +360,12 @@ async def process_row(page, row, drive_service, drive_folder_id, filtered_folder
     except Exception:
         pass
 
-    png = await page.screenshot(full_page=False)
+    raw_png = await page.screenshot(full_page=False)
+    try:
+        png = add_url_banner(raw_png, page.url)
+    except Exception as e:
+        print(f"  url banner failed ({e}); uploading without it", flush=True)
+        png = raw_png
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     name = (
         f"{ts}_{slugify(row['category'])}_"
@@ -323,7 +376,9 @@ async def process_row(page, row, drive_service, drive_folder_id, filtered_folder
 
     if filtered_folder_id:
         try:
-            phash = compute_phash(png)
+            # Hash the raw page (banner excluded) so hashes stay comparable
+            # with files uploaded before the banner existed.
+            phash = compute_phash(raw_png)
             if filtered_has_phash(drive_service, filtered_folder_id, phash):
                 print(f"  duplicate (phash {phash}); skipping filtered upload", flush=True)
             else:
