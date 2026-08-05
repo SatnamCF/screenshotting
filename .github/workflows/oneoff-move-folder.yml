@@ -1,0 +1,26 @@
+name: oneoff-move-folder
+
+# One-off maintenance job: reparents the "Elizabeth Elmer" job folder (and its
+# filtered sibling) into the correct "Screenshot Output" folder. These landed
+# outside it because DRIVE_FOLDER_ID pointed elsewhere for a window of runs.
+# Delete this workflow file once it has been run successfully.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install google-api-python-client google-auth
+      - name: Write service account credentials
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: printf '%s' "$GOOGLE_CREDENTIALS_JSON" > credentials.json
+      - name: Move folders
+        run: python move_orphaned_folder.py
