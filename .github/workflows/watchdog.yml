@@ -1,0 +1,48 @@
+name: watchdog
+
+# Checks that both screenshot automations' scheduled workflows are still
+# enabled (GitHub auto-disables scheduled workflows after 60 days without
+# repository activity, with no email/notification of its own) and posts to
+# Slack if either one has been disabled.
+#
+# Lives here (SatnamCF/screenshotting) because this repo gets regular commits
+# and won't itself hit the 60-day inactivity disable. Checks its own
+# workflow too, as a second line of defense.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"  # every 6 hours
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check automation workflow states
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -u
+
+          notify() {
+            curl -sf -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"$1\"}" \
+              "$SLACK_WEBHOOK_URL"
+          }
+
+          check() {
+            repo="$1"
+            label="$2"
+            state=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/$repo/actions/workflows/screenshot.yml" \
+              | python3 -c "import json,sys; print(json.load(sys.stdin).get('state','unknown'))")
+            echo "$label ($repo): $state"
+            if [ "$state" != "active" ]; then
+              notify ":rotating_light: *$label* workflow is *$state* (\`$repo/screenshot.yml\`). It will not run on schedule until someone re-enables it."
+            fi
+          }
+
+          check "Sai-Blackbyrn/screenshotting" "Automation 2"
+          check "SatnamCF/screenshotting" "Automation 1"
