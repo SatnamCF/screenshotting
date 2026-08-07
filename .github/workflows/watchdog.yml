@@ -3,15 +3,27 @@ name: watchdog
 # Checks that both screenshot automations' scheduled workflows are still
 # enabled (GitHub auto-disables scheduled workflows after 60 days without
 # repository activity, with no email/notification of its own) and posts to
-# Slack if either one has been disabled.
+# Slack when either one's state changes.
 #
 # Lives here (SatnamCF/screenshotting) because this repo gets regular commits
 # and won't itself hit the 60-day inactivity disable. Checks its own
 # workflow too, as a second line of defense.
+#
+# Runs every 5 minutes (the shortest interval GitHub allows for `schedule`)
+# so a disabled workflow is caught quickly rather than up to 6h late. Safe
+# to run this often only because this repo is public - GitHub-hosted Actions
+# minutes are free/unlimited on public repos. Note GitHub does not guarantee
+# exact schedule timing; runs can lag a few minutes during high platform load.
+#
+# Notifies only on state TRANSITIONS, not on every check - .github/watchdog-state.json
+# (committed back to this repo) is the single source of truth for each
+# automation's last-known state, so a workflow that stays disabled for hours
+# doesn't spam the channel every 5 minutes, and re-enabling it sends a
+# confirmation instead of just going quiet.
 
 on:
   schedule:
-    - cron: "0 */6 * * *"  # every 6 hours
+    - cron: "*/5 * * * *"  # every 5 minutes
   workflow_dispatch:
     inputs:
       test_notify:
@@ -19,41 +31,85 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write
+
+concurrency:
+  group: watchdog-state
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
+
       - name: Check automation workflow states
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           TEST_NOTIFY: ${{ inputs.test_notify }}
         run: |
-          set -u
+          python3 - <<'EOF'
+          import json, os, urllib.request
 
-          notify() {
-            curl -sf -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\"$1\"}" \
-              "$SLACK_WEBHOOK_URL"
-          }
+          STATE_FILE = ".github/watchdog-state.json"
+          GH_TOKEN = os.environ["GH_TOKEN"]
+          SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
+          TEST_NOTIFY = os.environ.get("TEST_NOTIFY", "false") == "true"
 
-          if [ "${TEST_NOTIFY:-false}" = "true" ]; then
-            notify ":white_check_mark: Watchdog test message - Slack delivery is working."
-            exit 0
+          def notify(text):
+              req = urllib.request.Request(
+                  SLACK_WEBHOOK_URL,
+                  data=json.dumps({"text": text}).encode(),
+                  headers={"Content-type": "application/json"},
+              )
+              urllib.request.urlopen(req).read()
+
+          if TEST_NOTIFY:
+              notify(":white_check_mark: Watchdog test message - Slack delivery is working.")
+              raise SystemExit(0)
+
+          try:
+              with open(STATE_FILE) as f:
+                  prev_states = json.load(f)
+          except FileNotFoundError:
+              prev_states = {}
+
+          TARGETS = [
+              ("Sai-Blackbyrn/screenshotting", "Automation 2"),
+              ("SatnamCF/screenshotting", "Automation 1"),
+          ]
+
+          for repo, label in TARGETS:
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/workflows/screenshot.yml",
+                  headers={"Authorization": f"Bearer {GH_TOKEN}"},
+              )
+              with urllib.request.urlopen(req) as resp:
+                  state = json.load(resp).get("state", "unknown")
+              prev = prev_states.get(repo, "active")
+              print(f"{label} ({repo}): {state} (was: {prev})")
+
+              if state != prev:
+                  prev_states[repo] = state
+                  if state != "active":
+                      notify(f":rotating_light: *{label}* workflow is now *{state}* (`{repo}/screenshot.yml`). It will not run on schedule until someone re-enables it.")
+                  else:
+                      notify(f":white_check_mark: *{label}* workflow is *active* again (`{repo}/screenshot.yml`).")
+
+          with open(STATE_FILE, "w") as f:
+              json.dump(prev_states, f, indent=2)
+              f.write("\n")
+          EOF
+
+      - name: Commit state if changed
+        run: |
+          if ! git diff --quiet -- .github/watchdog-state.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .github/watchdog-state.json
+            git commit -m "chore(watchdog): update tracked workflow state [skip ci]"
+            git push
           fi
-
-          check() {
-            repo="$1"
-            label="$2"
-            state=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/$repo/actions/workflows/screenshot.yml" \
-              | python3 -c "import json,sys; print(json.load(sys.stdin).get('state','unknown'))")
-            echo "$label ($repo): $state"
-            if [ "$state" != "active" ]; then
-              notify ":rotating_light: *$label* workflow is *$state* (\`$repo/screenshot.yml\`). It will not run on schedule until someone re-enables it."
-            fi
-          }
-
-          check "Sai-Blackbyrn/screenshotting" "Automation 2"
-          check "SatnamCF/screenshotting" "Automation 1"
