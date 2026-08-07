@@ -12,7 +12,12 @@ name: watchdog
 on:
   schedule:
     - cron: "0 */6 * * *"  # every 6 hours
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      test_notify:
+        description: "Send a test Slack message regardless of workflow state"
+        type: boolean
+        default: false
 
 jobs:
   check:
@@ -23,6 +28,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TEST_NOTIFY: ${{ inputs.test_notify }}
         run: |
           set -u
 
@@ -31,6 +37,11 @@ jobs:
               --data "{\"text\":\"$1\"}" \
               "$SLACK_WEBHOOK_URL"
           }
+
+          if [ "${TEST_NOTIFY:-false}" = "true" ]; then
+            notify ":white_check_mark: Watchdog test message - Slack delivery is working."
+            exit 0
+          fi
 
           check() {
             repo="$1"
