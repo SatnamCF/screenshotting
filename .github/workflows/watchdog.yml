@@ -106,10 +106,10 @@ jobs:
 
       - name: Commit state if changed
         run: |
-          if ! git diff --quiet -- .github/watchdog-state.json; then
+          git add .github/watchdog-state.json
+          if ! git diff --cached --quiet -- .github/watchdog-state.json; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add .github/watchdog-state.json
             git commit -m "chore(watchdog): update tracked workflow state [skip ci]"
             git push
           fi
