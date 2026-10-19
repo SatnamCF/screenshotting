@@ -16,6 +16,7 @@ import io
 import json
 import os
 import re
+import socket
 import sys
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -25,6 +26,11 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from playwright.async_api import async_playwright
+
+# Give every socket (including Drive API HTTP calls) a hard 120-second
+# read/write deadline.  Without this, a stalled upload can hang forever and
+# eventually raise the "read operation timed out" error seen in run #5382.
+socket.setdefaulttimeout(120)
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -70,7 +76,7 @@ def find_or_create_subfolder(drive_service, parent_id, name):
         fields="files(id,name)",
         includeItemsFromAllDrives=True,
         supportsAllDrives=True,
-    ).execute()
+    ).execute(num_retries=3)
     if res.get("files"):
         return res["files"][0]["id"]
     created = drive_service.files().create(
@@ -81,7 +87,7 @@ def find_or_create_subfolder(drive_service, parent_id, name):
         },
         fields="id",
         supportsAllDrives=True,
-    ).execute()
+    ).execute(num_retries=3)
     return created["id"]
 
 
@@ -92,7 +98,7 @@ def upload_to_drive(drive_service, folder_id, name, data):
         media_body=media,
         fields="id",
         supportsAllDrives=True,
-    ).execute()
+    ).execute(num_retries=3)
 
 
 # ---------- URL banner ----------
@@ -188,7 +194,7 @@ def find_filtered_entries(drive_service, filtered_folder_id, key_slug):
         includeItemsFromAllDrives=True,
         supportsAllDrives=True,
         pageSize=10,
-    ).execute()
+    ).execute(num_retries=3)
     entries = []
     for f in res.get("files", []):
         m = FILTERED_NAME_RE.match(f["name"])
@@ -198,7 +204,7 @@ def find_filtered_entries(drive_service, filtered_folder_id, key_slug):
 
 
 def delete_from_drive(drive_service, file_id):
-    drive_service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+    drive_service.files().delete(fileId=file_id, supportsAllDrives=True).execute(num_retries=3)
 
 
 # ---------- Sheets ----------
